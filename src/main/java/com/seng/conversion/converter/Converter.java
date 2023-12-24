@@ -1,13 +1,19 @@
 package com.seng.conversion.converter;
 
+import com.seng.conversion.customErrorHandler.PythonScriptExecutionException;
+import com.seng.conversion.customErrorHandler.UnsupportedFormatException;
 import com.seng.conversion.helper.ConversionHelper;
 import com.seng.conversion.helper.ConversionData;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.nio.file.Paths;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 @Service
@@ -19,33 +25,36 @@ public class Converter {
                         helper.getOutputFormat().equals(outputFormat));
     }
 
-    public String convertFile(String originalInputFile, String originalOutputFile) {
-        try {
-            String inputFormat = getFileExtension(originalInputFile);
-            String outputFormat = getFileExtension(originalOutputFile);
 
-            if (isConversionPossible(inputFormat, outputFormat)) {
+    @Async("taskExecutor")
+    public CompletableFuture<String> convertFile(String originalInputFile, String originalOutputFile) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                String inputFormat = getFileExtension(originalInputFile);
+                String outputFormat = getFileExtension(originalOutputFile);
+
+                if (!isConversionPossible(inputFormat, outputFormat)) {
+                    throw new UnsupportedFormatException("Conversion from " + inputFormat + " to " + outputFormat + " is not supported.");
+                }
+
                 String script = ConversionData.conversionHelpers.stream()
                         .filter(helper -> helper.getInputFormat().equals(inputFormat) && helper.getOutputFormat().equals(outputFormat))
                         .findFirst()
                         .map(ConversionHelper::getScript)
-                        .orElseThrow(() -> new IllegalArgumentException("Script not found for conversion from " + inputFormat + " to " + outputFormat));
+                        .orElseThrow(() -> new UnsupportedFormatException("Script not found for conversion from " + inputFormat + " to " + outputFormat));
 
                 boolean success = runPythonScript(script, originalInputFile, originalOutputFile);
-
-                if (success) {
-                    return Paths.get(ConversionData.outputPath, originalOutputFile).toString();
-                } else {
-                    throw new IOException("Python script execution failed.");
+                if (!success) {
+                    throw new PythonScriptExecutionException("Python script execution failed.");
                 }
-            } else {
-                throw new IllegalArgumentException("Conversion from " + inputFormat + " to " + outputFormat + " is not supported.");
+
+                return originalOutputFile;
+            } catch (UnsupportedFormatException | PythonScriptExecutionException e) {
+                throw new RuntimeException(e);
             }
-        } catch (Exception e) {
-            e.printStackTrace();
-            return null;
-        }
+        });
     }
+
 
     private String getFileExtension(String file) {
         if (file.contains(".")) {
@@ -56,21 +65,45 @@ public class Converter {
 
     private boolean runPythonScript(String scriptName, String inputFile, String outputFile) {
         ProcessBuilder processBuilder = new ProcessBuilder();
+        String command = "python3 " + ConversionData.pythonScriptsPath + "/" + scriptName + " " +
+                ConversionData.inputPath + "/" + inputFile + " " +
+                ConversionData.outputPath + "/" + outputFile;
+
         try {
-            processBuilder.command("python3", ConversionData.pythonScriptsPath + "/" + scriptName,
+            // Print the command
+            System.out.println("Executing command: " + command);
+
+            processBuilder.command(
+                    "python3", ConversionData.pythonScriptsPath + "/" + scriptName,
                     ConversionData.inputPath + "/" + inputFile, ConversionData.outputPath + "/" + outputFile);
+
+            processBuilder.redirectErrorStream(true); // Merge the error stream with the standard output stream
+
             Process process = processBuilder.start();
 
-            // Wait for the process to complete
+            // Read the output from the process (including errors)
+            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            String line;
+            StringBuilder output = new StringBuilder();
+            while ((line = reader.readLine()) != null) {
+                output.append(line).append("\n");
+            }
+
             int exitCode = process.waitFor();
 
-            // Return true if the script executed successfully
-            return exitCode == 0;
+            if (exitCode != 0) {
+                // Log or handle the error output
+                System.err.println("Error executing Python script: " + output.toString());
+                return false;
+            }
+
+            return true;
         } catch (IOException | InterruptedException e) {
             e.printStackTrace();
             return false;
         }
     }
+
 
     @Scheduled(fixedDelay = 60000)
     public void cleanupOldFiles() {

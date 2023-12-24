@@ -15,7 +15,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.UUID;
+import java.util.*;
+import java.util.concurrent.CompletableFuture;
 
 @org.springframework.web.bind.annotation.RestController
 public class RestController{
@@ -26,30 +27,36 @@ public class RestController{
         this.converter = converter;
     }
 
-    @PostMapping("/convert")
-    public ResponseEntity<?> convertFile(@RequestParam("file") MultipartFile file,
-                                         @RequestParam("format") String desiredFormat) {
-        try {
-            String originalFilename = file.getOriginalFilename();
-            String uid = UUID.randomUUID().toString().replace("-","s");
-            String modifiedInputFilename = appendUidToFileName(originalFilename, uid);
-            String modifiedOutputFilename = changeFileExtension(modifiedInputFilename, desiredFormat);
 
-            Path targetLocation = Paths.get(ConversionData.inputPath).resolve(modifiedInputFilename);
+    @PostMapping("/convert")
+    public CompletableFuture<ResponseEntity<String>> convertFile(@RequestParam("file") MultipartFile file,
+                                                                 @RequestParam("format") String desiredFormat) {
+        if (file.isEmpty() || file.getOriginalFilename() == null) {
+            return CompletableFuture.completedFuture(
+                    ResponseEntity.badRequest().body("No file provided or file is empty.")
+            );
+        }
+
+        String originalFilename = file.getOriginalFilename();
+        String uid = UUID.randomUUID().toString().replace("-", "");
+        String modifiedInputFilename = appendUidToFileName(originalFilename, uid);
+        String modifiedOutputFilename = changeFileExtension(modifiedInputFilename, desiredFormat);
+
+        Path targetLocation = Paths.get(ConversionData.inputPath).resolve(modifiedInputFilename);
+        try {
             Files.copy(file.getInputStream(), targetLocation);
 
-            String outputFilePath = converter.convertFile(modifiedInputFilename, modifiedOutputFilename);
-            if (outputFilePath == null) {
-                throw new IOException("File conversion failed.");
-            }
-
-            String downloadLink = "http://localhost:8080/download/" + modifiedOutputFilename;
-            //return ResponseEntity.ok("File converted successfully. Download at: " + downloadLink);
-            return ResponseEntity.ok(downloadLink);
-        } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Error: " + e.getMessage());
+            return converter.convertFile(modifiedInputFilename, modifiedOutputFilename)
+                    .thenApply(downloadLink -> ResponseEntity.ok("http://localhost:8080/download/" + downloadLink))
+                    .exceptionally(e -> ResponseEntity.badRequest().body("Conversion failed: " + e.getMessage()));
+        } catch (IOException e) {
+            return CompletableFuture.completedFuture(
+                    ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("File processing error: " + e.getMessage())
+            );
         }
     }
+
+
 
     @GetMapping("/download/{filename}")
     public ResponseEntity<Resource> downloadFile(@PathVariable String filename) {
@@ -69,6 +76,19 @@ public class RestController{
         } catch (Exception e) {
             return ResponseEntity.internalServerError().build();
         }
+    }
+
+    @GetMapping("/types")
+    public ResponseEntity<Map<String, List<String>>> getSupportedConversions() {
+        Map<String, List<String>> supportedConversions = new HashMap<>();
+
+        // Aggregate possible conversions for each format
+        ConversionData.conversionHelpers.forEach(helper -> {
+            supportedConversions.computeIfAbsent(helper.getInputFormat(), k -> new ArrayList<>())
+                    .add(helper.getOutputFormat());
+        });
+
+        return ResponseEntity.ok(supportedConversions);
     }
 
     private String appendUidToFileName(String fileName, String uid) {

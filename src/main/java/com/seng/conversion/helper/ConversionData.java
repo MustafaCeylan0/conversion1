@@ -6,17 +6,11 @@ import java.util.List;
 public class ConversionData {
     public static final List<ConversionHelper> conversionHelpers = Arrays.asList(
             // PDF conversions
-            new ConversionHelper("pdf", "doc", "pdf_to_doc.py"),
-            new ConversionHelper("pdf", "docx", "pdf_to_docx.py"),
-            // PDF conversions
-            new ConversionHelper("pdf", "doc", "pdf_to_doc.py"),
-            new ConversionHelper("pdf", "docx", "pdf_to_docx.py"),
-            new ConversionHelper("pdf", "html", "pdf_to_html.py"),
-            new ConversionHelper("pdf", "txt", "pdf_to_txt.py"),
-            new ConversionHelper("pdf", "jpg", "pdf_to_jpg.py"),
-            new ConversionHelper("pdf", "png", "pdf_to_png.py"),
-            new ConversionHelper("pdf", "xlsx", "pdf_to_xlsx.py"),
-            new ConversionHelper("pdf", "pptx", "pdf_to_pptx.py"),
+
+            new ConversionHelper("pdf", "docx", "pdf_to_x.py"),
+            new ConversionHelper("pdf", "txt", "pdf_to_x.py"),
+            new ConversionHelper("pdf", "jpg", "pdf_to_x.py"),
+            new ConversionHelper("pdf", "png", "pdf_to_x.py"),
             // DOC conversion,
             new ConversionHelper("doc", "pdf", "doc_to_pdf.py"),
             new ConversionHelper("doc", "docx", "doc_to_docx.py"),
